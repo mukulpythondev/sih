@@ -1,0 +1,54 @@
+version: "3.9"
+
+services:
+
+  # ----------------------------------------------------
+  # 1. OLLAMA SERVICE (Local LLM + VLM server)
+  # ----------------------------------------------------
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama   # persists pulled models
+    restart: unless-stopped
+
+  # ----------------------------------------------------
+  # 2. LOCAL QDRANT (Vector DB for embeddings)
+  # ----------------------------------------------------
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    restart: unless-stopped
+
+  # ----------------------------------------------------
+  # 3. AI SERVICE (FastAPI backend)
+  # ----------------------------------------------------
+  ai-service:
+    build: ./ai-service
+    container_name: ai-service
+    depends_on:
+      - ollama
+      - qdrant
+    ports:
+      - "8000:8000"
+    environment:
+      OLLAMA_URL: "http://ollama:11434"
+      QDRANT_URL: "http://qdrant:6333"
+      SLM_MODEL: "phi3"             # summarization
+      LLM_MODEL: "qwen2.5:14b"      # final answer generation
+      VLM_MODEL: "qwen2.5-vl:7b"    # image-based reasoning
+    volumes:
+      - ./ai-service:/app
+    restart: unless-stopped
+
+
+volumes:
+  ollama_models:
+  qdrant_storage:
