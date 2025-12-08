@@ -68,6 +68,13 @@ const useProjectStore = create((set, get) => ({
         messages: [],
     }),
 
+    // Delete chat
+    deleteChat: (chatId) => set((state) => ({
+        chats: state.chats.filter((c) => c.id !== chatId),
+        currentChat: state.currentChat?.id === chatId ? null : state.currentChat,
+        messages: state.currentChat?.id === chatId ? [] : state.messages,
+    })),
+
     // Set messages for current chat
     setMessages: (messages) => set({ messages }),
 
@@ -107,11 +114,16 @@ const useProjectStore = create((set, get) => ({
     })),
 
     // Toggle fullscreen mode
-    toggleFullscreen: () => set((state) => ({
-        isFullscreenMode: !state.isFullscreenMode,
-        isLeftPanelCollapsed: !state.isFullscreenMode ? true : state.isLeftPanelCollapsed,
-        isRightPanelCollapsed: !state.isFullscreenMode ? true : state.isRightPanelCollapsed,
-    })),
+    toggleFullscreen: () => set((state) => {
+        const newFullscreenMode = !state.isFullscreenMode;
+        return {
+            isFullscreenMode: newFullscreenMode,
+            // When entering fullscreen, collapse both panels
+            // When exiting fullscreen, restore both panels (uncollapse them)
+            isLeftPanelCollapsed: newFullscreenMode ? true : false,
+            isRightPanelCollapsed: newFullscreenMode ? true : false,
+        };
+    }),
 
     // Reset panel states
     resetPanelStates: () => set({

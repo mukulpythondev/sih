@@ -1,6 +1,7 @@
 import api from './api';
 import { mockApi } from './mockApi';
 import { USE_MOCK_API } from '../config';
+import { transformChatSession, transformChatMessage, transformArray } from '../utils/dataTransformers';
 
 const projectService = {
     // Projects
@@ -44,38 +45,67 @@ const projectService = {
         return response.data;
     },
 
-    // Chats
+    // Chats (chat-sessions in backend)
     async getProjectChats(projectId) {
         if (USE_MOCK_API) {
             return mockApi.getProjectChats(projectId);
         }
-        const response = await api.get(`/projects/${projectId}/chats/`);
-        return response.data;
+        // Backend filters by project automatically based on user membership
+        const response = await api.get(`/chat-sessions/?project=${projectId}`);
+        // Transform backend format to frontend format
+        return transformArray(response.data, transformChatSession);
     },
 
     async createChat(projectId, data) {
         if (USE_MOCK_API) {
             return mockApi.createChat(projectId, data);
         }
-        const response = await api.post(`/projects/${projectId}/chats/`, data);
+        // Backend expects 'title' instead of 'name', and 'project' field
+        const response = await api.post(`/chat-sessions/`, {
+            project: projectId,
+            title: data.name || data.title || 'New Chat',
+            status: 'ACTIVE'
+        });
+        // Transform response to frontend format
+        return transformChatSession(response.data);
+    },
+
+    async deleteChat(chatId) {
+        if (USE_MOCK_API) {
+            return mockApi.deleteChat(chatId);
+        }
+        const response = await api.delete(`/chat-sessions/${chatId}/`);
         return response.data;
     },
 
-    // Messages
+    // Messages (chat-messages in backend)
     async getChatMessages(chatId) {
         if (USE_MOCK_API) {
             return mockApi.getChatMessages(chatId);
         }
-        const response = await api.get(`/chats/${chatId}/messages/`);
-        return response.data;
+        const response = await api.get(`/chat-messages/?session=${chatId}`);
+        // Transform backend format to frontend format
+        return transformArray(response.data, transformChatMessage);
     },
 
     async sendMessage(chatId, data) {
         if (USE_MOCK_API) {
             return mockApi.sendMessage(chatId, data);
         }
-        const response = await api.post(`/chats/${chatId}/messages/`, data);
-        return response.data;
+        // Backend expects 'session', 'role', and 'content'
+        const userMessage = await api.post(`/chat-messages/`, {
+            session: chatId,
+            role: 'USER',
+            content: data.content,
+            metadata: data.attachments ? { attachments: data.attachments } : null
+        });
+
+        // Transform and return user message
+        // Note: Backend may send assistant response separately via websocket or polling
+        return {
+            user: transformChatMessage(userMessage.data),
+            assistant: null // Will be handled by real-time updates
+        };
     },
 
     // Documents

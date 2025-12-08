@@ -1,6 +1,6 @@
 // Mock API service for testing without backend
 
-// Mock users database
+// Mock users database - simplified without roles or login counts
 const mockUsers = {
     admin: {
         username: 'admin',
@@ -8,55 +8,10 @@ const mockUsers = {
         user: {
             id: 1,
             username: 'admin',
-            email: 'admin@jalsetu.com',
-            first_name: 'Super',
-            last_name: 'Admin',
-            role: 'SUPER_ADMIN',
+            email: 'admin@docmind.com',
+            first_name: 'Admin',
+            last_name: 'User',
             department: 'Administration',
-            login_count: 42,
-        },
-    },
-    analyst1: {
-        username: 'analyst1',
-        password: 'Analyst@123',
-        user: {
-            id: 2,
-            username: 'analyst1',
-            email: 'analyst@jalsetu.com',
-            first_name: 'John',
-            last_name: 'Doe',
-            role: 'SENIOR_ANALYST',
-            department: 'Research',
-            login_count: 15,
-        },
-    },
-    user1: {
-        username: 'user1',
-        password: 'User@123',
-        user: {
-            id: 3,
-            username: 'user1',
-            email: 'user@jalsetu.com',
-            first_name: 'Jane',
-            last_name: 'Smith',
-            role: 'ANALYST',
-            department: 'Operations',
-            login_count: 8,
-        },
-    },
-    newuser: {
-        username: 'newuser',
-        password: 'TempPass123',
-        mustChangePassword: true,
-        user: {
-            id: 4,
-            username: 'newuser',
-            email: 'newuser@jalsetu.com',
-            first_name: '',
-            last_name: '',
-            role: 'ANALYST',
-            department: '',
-            login_count: 1,
         },
     },
 };
@@ -302,49 +257,7 @@ let mockDocuments = [
     },
 ];
 
-// Mock onboarding requests
-let mockOnboardingRequests = [
-    {
-        id: 1,
-        email: 'alice@example.com',
-        full_name: 'Alice Johnson',
-        requested_role: 'SENIOR_ANALYST',
-        department: 'Data Science',
-        status: 'PENDING',
-        created_at: '2025-11-28T10:30:00Z',
-        remark: null,
-    },
-    {
-        id: 2,
-        email: 'bob@example.com',
-        full_name: 'Bob Williams',
-        requested_role: 'ANALYST',
-        department: 'Finance',
-        status: 'PENDING',
-        created_at: '2025-11-29T14:20:00Z',
-        remark: null,
-    },
-    {
-        id: 3,
-        email: 'charlie@example.com',
-        full_name: 'Charlie Brown',
-        requested_role: 'SENIOR_ANALYST',
-        department: 'Engineering',
-        status: 'APPROVED',
-        created_at: '2025-11-25T09:15:00Z',
-        remark: 'Approved based on manager recommendation',
-    },
-    {
-        id: 4,
-        email: 'diana@example.com',
-        full_name: 'Diana Prince',
-        requested_role: 'ADMIN',
-        department: 'Security',
-        status: 'REJECTED',
-        created_at: '2025-11-26T16:45:00Z',
-        remark: 'Insufficient clearance level',
-    },
-];
+// Onboarding requests removed - users are created directly via signup
 
 // Current logged in user (for profile updates)
 let currentUser = null;
@@ -390,12 +303,7 @@ export const mockApi = {
     getProfile: async () => {
         await delay(300);
         if (!currentUser) {
-            throw {
-                response: {
-                    status: 401,
-                    data: { detail: 'Not authenticated' },
-                },
-            };
+            currentUser = mockUsers.admin.user;
         }
         return currentUser;
     },
@@ -404,12 +312,7 @@ export const mockApi = {
     updateProfile: async (data) => {
         await delay(500);
         if (!currentUser) {
-            throw {
-                response: {
-                    status: 401,
-                    data: { detail: 'Not authenticated' },
-                },
-            };
+            currentUser = mockUsers.admin.user;
         }
         currentUser = { ...currentUser, ...data };
         return currentUser;
@@ -422,57 +325,89 @@ export const mockApi = {
         return { message: 'Password changed successfully' };
     },
 
-    // Submit onboarding request
-    submitOnboardingRequest: async (data) => {
+    // Sign up
+    signup: async (data) => {
         await delay(500);
-        const newRequest = {
-            id: mockOnboardingRequests.length + 1,
-            ...data,
-            status: 'PENDING',
-            created_at: new Date().toISOString(),
-            remark: null,
+
+        // Check if email already exists
+        const existingUser = Object.values(mockUsers).find(
+            (u) => u.user.email.toLowerCase() === data.email.toLowerCase()
+        );
+
+        if (existingUser) {
+            throw {
+                response: {
+                    status: 400,
+                    data: { email: ['A user with this email already exists'] },
+                },
+            };
+        }
+
+        // Create new user
+        const newUserId = Math.max(...Object.values(mockUsers).map((u) => u.user.id), 0) + 1;
+        const username = data.email.split('@')[0]; // Generate username from email
+
+        const newUser = {
+            username: username,
+            password: data.password, // In production, this would be hashed
+            user: {
+                id: newUserId,
+                username: username,
+                email: data.email,
+                first_name: data.full_name.split(' ')[0] || '',
+                last_name: data.full_name.split(' ').slice(1).join(' ') || '',
+                department: data.department || '',
+            },
         };
-        mockOnboardingRequests.push(newRequest);
-        return newRequest;
+
+        // Add to mock users database
+        mockUsers[username] = newUser;
+        currentUser = { ...newUser.user };
+
+        // Return auth response
+        return {
+            access: `mock-access-token-${newUser.user.id}`,
+            refresh: `mock-refresh-token-${newUser.user.id}`,
+            user: newUser.user,
+        };
     },
 
-    // Get onboarding requests
-    getOnboardingRequests: async () => {
+    // Reset password
+    resetPassword: async (data) => {
         await delay(500);
-        return mockOnboardingRequests;
-    },
 
-    // Get onboarding request detail
-    getOnboardingRequestDetail: async (id) => {
-        await delay(300);
-        const request = mockOnboardingRequests.find((r) => r.id === parseInt(id));
-        if (!request) {
+        // Find user by email
+        const userEntry = Object.values(mockUsers).find(
+            (u) => u.user.email.toLowerCase() === data.email.toLowerCase()
+        );
+
+        if (!userEntry) {
             throw {
                 response: {
                     status: 404,
-                    data: { detail: 'Request not found' },
+                    data: { detail: 'No user found with this email address' },
                 },
             };
         }
-        return request;
-    },
 
-    // Decide on onboarding request
-    decideOnboardingRequest: async (id, action, remark) => {
-        await delay(500);
-        const request = mockOnboardingRequests.find((r) => r.id === parseInt(id));
-        if (!request) {
+        // Validate full name matches
+        const userFullName = `${userEntry.user.first_name} ${userEntry.user.last_name}`.trim();
+        if (userFullName.toLowerCase() !== data.full_name.toLowerCase()) {
             throw {
                 response: {
-                    status: 404,
-                    data: { detail: 'Request not found' },
+                    status: 400,
+                    data: { detail: 'Full name does not match our records' },
                 },
             };
         }
-        request.status = action === 'APPROVE' ? 'APPROVED' : 'REJECTED';
-        request.remark = remark;
-        return request;
+
+        // Update password
+        userEntry.password = data.new_password;
+
+        return { message: 'Password reset successfully' };
     },
+
+    // Onboarding methods removed - users are created directly via signup
 
     // Upload document
     uploadDocument: async (formData, onUploadProgress) => {
@@ -532,13 +467,10 @@ export const mockApi = {
     // Projects
     getProjects: async () => {
         await delay(500);
+        // If currentUser is null but we're using mock API, default to admin user
+        // This handles cases where user is authenticated from stored session
         if (!currentUser) {
-            throw {
-                response: {
-                    status: 401,
-                    data: { detail: 'Not authenticated' },
-                },
-            };
+            currentUser = mockUsers.admin.user;
         }
         // Return projects for current user
         return mockProjects.filter((p) => p.user_id === currentUser.id);
@@ -561,17 +493,12 @@ export const mockApi = {
     createProject: async (data) => {
         await delay(500);
         if (!currentUser) {
-            throw {
-                response: {
-                    status: 401,
-                    data: { detail: 'Not authenticated' },
-                },
-            };
+            currentUser = mockUsers.admin.user;
         }
         const newProject = {
             id: Math.max(...mockProjects.map((p) => p.id), 0) + 1,
-            name: data.name,
-            description: data.description || '',
+            name: data.name || null,  // Allow null names
+            description: data.description || null,  // Allow null descriptions
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
             user_id: currentUser.id,
@@ -639,6 +566,32 @@ export const mockApi = {
         }
 
         return newChat;
+    },
+
+    deleteChat: async (chatId) => {
+        await delay(500);
+        const index = mockChats.findIndex((c) => c.id === parseInt(chatId));
+        if (index === -1) {
+            throw {
+                response: {
+                    status: 404,
+                    data: { detail: 'Chat not found' },
+                },
+            };
+        }
+        const chat = mockChats[index];
+        mockChats.splice(index, 1);
+
+        // Delete related messages
+        mockMessages = mockMessages.filter((m) => m.chat_id !== parseInt(chatId));
+
+        // Update project chat count
+        const project = mockProjects.find((p) => p.id === chat.project_id);
+        if (project) {
+            project.chat_count = Math.max(0, project.chat_count - 1);
+        }
+
+        return { message: 'Chat deleted successfully' };
     },
 
     // Messages

@@ -1,27 +1,46 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { FiFileText, FiUpload, FiUsers, FiActivity, FiPlus, FiFolder } from 'react-icons/fi';
+import { useSearchParams, useLocation } from 'react-router-dom';
+import { FiFileText, FiUpload, FiUsers, FiPlus, FiFolder } from 'react-icons/fi';
 import useAuthStore from '../store/authStore';
 import useProjectStore from '../store/projectStore';
 import Sidebar from '../components/Sidebar';
 import ProjectCard from '../components/ProjectCard';
 import CreateProjectModal from '../components/CreateProjectModal';
+import DeleteConfirmModal from '../components/DeleteConfirmModal';
 import projectService from '../services/projectService';
 import toast from 'react-hot-toast';
 
 const Dashboard = () => {
     const { user } = useAuthStore();
-    const { projects, setProjects, addProject } = useProjectStore();
+    const { projects, setProjects, addProject, deleteProject } = useProjectStore();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
+    const [searchParams, setSearchParams] = useSearchParams();
+    const [deleteModal, setDeleteModal] = useState({ isOpen: false, project: null });
+    const location = useLocation();
 
-    // Load projects on mount
+    // Check if modal should be opened from URL parameter
+    useEffect(() => {
+        if (searchParams.get('openModal') === 'true') {
+            setIsModalOpen(true);
+            // Remove the query parameter from URL
+            searchParams.delete('openModal');
+            setSearchParams(searchParams);
+        }
+    }, [searchParams, setSearchParams]);
+
+    // Load projects on mount and whenever we navigate back to dashboard
     useEffect(() => {
         const loadProjects = async () => {
             try {
                 setIsLoading(true);
                 const userProjects = await projectService.getProjects();
-                setProjects(userProjects);
+                // Sort by updated_at descending (most recent first)
+                const sortedProjects = userProjects.sort((a, b) =>
+                    new Date(b.updated_at) - new Date(a.updated_at)
+                );
+                setProjects(sortedProjects);
             } catch (error) {
                 console.error('Error loading projects:', error);
                 toast.error('Failed to load projects');
@@ -31,7 +50,7 @@ const Dashboard = () => {
         };
 
         loadProjects();
-    }, [setProjects]);
+    }, [location.pathname]); // Reload when navigating to dashboard
 
     // Handle create project
     const handleCreateProject = async (data) => {
@@ -44,78 +63,130 @@ const Dashboard = () => {
         }
     };
 
+    // Handle delete project
+    const handleDeleteProject = (project) => {
+        setDeleteModal({ isOpen: true, project });
+    };
+
+    // Confirm delete project
+    const handleConfirmDelete = async () => {
+        const { project } = deleteModal;
+        try {
+            await projectService.deleteProject(project.id);
+            deleteProject(project.id);
+            toast.success('Project deleted successfully');
+        } catch (error) {
+            console.error('Error deleting project:', error);
+            toast.error('Failed to delete project');
+        } finally {
+            setDeleteModal({ isOpen: false, project: null });
+        }
+    };
+
     const quickActions = [
         {
             icon: FiUpload,
             title: 'Upload Document',
             description: 'Upload and process new documents',
             path: '/upload',
-            color: 'from-primary-600 to-primary-700',
-            roles: ['SENIOR_ANALYST', 'SUPER_ADMIN'],
-        },
-        {
-            icon: FiUsers,
-            title: 'Manage Onboarding',
-            description: 'Review and approve access requests',
-            path: '/onboarding',
-            color: 'from-blue-600 to-blue-700',
-            roles: ['SUPER_ADMIN'],
+            color: 'orange',
         },
         {
             icon: FiFileText,
             title: 'View Profile',
             description: 'Manage your account settings',
             path: '/profile',
-            color: 'from-purple-600 to-purple-700',
-            roles: [],
+            color: 'purple',
         },
     ];
 
-    const filteredActions = quickActions.filter(
-        (action) => action.roles.length === 0 || (user && action.roles.includes(user.role))
-    );
-
     return (
-        <div className="flex h-screen bg-dark-950">
+        <div className="flex h-screen bg-raycast-bg">
             <Sidebar />
             <main className="flex-1 overflow-y-auto">
-                <div className="p-8">
+                <div className="p-6 max-w-7xl">
                     {/* Welcome Section */}
                     <motion.div
-                        initial={{ opacity: 0, y: 20 }}
+                        initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
-                        className="mb-8"
+                        transition={{ duration: 0.3 }}
+                        className="mb-6"
                     >
-                        <h1 className="text-4xl font-bold gradient-text mb-2">
+                        <h1 className="text-2xl font-bold text-raycast-text mb-1">
                             Welcome back, {user?.first_name || user?.username}!
                         </h1>
-                        <p className="text-gray-500">
+                        <p className="text-sm text-raycast-text-secondary">
                             Manage your projects, documents and collaborate with your team
                         </p>
                     </motion.div>
 
+                    {/* Stats Cards */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
+                        <motion.div
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.1, duration: 0.3 }}
+                            className="bg-raycast-surface border border-raycast-border rounded-raycast-lg p-3.5"
+                        >
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <p className="text-xs text-raycast-text-tertiary mb-1">Total Projects</p>
+                                    <p className="text-2xl font-bold text-raycast-text">{projects.length}</p>
+                                </div>
+                                <div className="w-10 h-10 rounded-lg bg-raycast-orange/10 flex items-center justify-center">
+                                    <FiFolder className="text-raycast-orange text-lg" />
+                                </div>
+                            </div>
+                        </motion.div>
+
+                        <motion.div
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.15, duration: 0.3 }}
+                            className="bg-raycast-surface border border-raycast-border rounded-raycast-lg p-3.5"
+                        >
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <p className="text-xs text-raycast-text-tertiary mb-1">Total Documents</p>
+                                    <p className="text-2xl font-bold text-raycast-text">
+                                        {projects.reduce((sum, p) => sum + p.document_count, 0)}
+                                    </p>
+                                </div>
+                                <div className="w-10 h-10 rounded-lg bg-raycast-blue/10 flex items-center justify-center">
+                                    <FiFileText className="text-raycast-blue text-lg" />
+                                </div>
+                            </div>
+                        </motion.div>
+                    </div>
+
                     {/* Create New Project Section */}
                     <motion.div
-                        initial={{ opacity: 0, y: 20 }}
+                        initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: 0.1 }}
-                        className="mb-8"
+                        transition={{ delay: 0.25, duration: 0.3 }}
+                        className="mb-6"
                     >
-                        <h2 className="text-2xl font-bold text-white mb-4">Create Project</h2>
+                        <h2 className="text-lg font-semibold text-raycast-text mb-3">Create Project</h2>
                         <motion.div
-                            whileHover={{ scale: 1.02 }}
+                            whileHover={{ scale: 1.01, y: -1 }}
+                            whileTap={{ scale: 0.99 }}
+                            transition={{ type: 'spring', stiffness: 400, damping: 25 }}
                             onClick={() => setIsModalOpen(true)}
-                            className="card cursor-pointer group hover:shadow-2xl transition-all duration-300 max-w-md"
+                            className="bg-raycast-surface border border-raycast-border hover:border-raycast-border-strong rounded-raycast-lg p-3.5 cursor-pointer group max-w-md transition-all duration-150"
                         >
-                            <div className="flex items-center gap-4">
-                                <div className="w-16 h-16 rounded-xl bg-gradient-to-br from-primary-600 to-primary-700 flex items-center justify-center shadow-lg group-hover:shadow-primary-500/50 transition-shadow">
-                                    <FiPlus className="text-white text-3xl" />
-                                </div>
+                            <div className="flex items-center gap-3">
+                                <motion.div
+                                    whileHover={{ rotate: 90 }}
+                                    transition={{ type: 'spring', stiffness: 400, damping: 17 }}
+                                    className="w-12 h-12 rounded-lg bg-gradient-to-br from-raycast-orange to-raycast-red flex items-center justify-center"
+                                >
+                                    <FiPlus className="text-white text-xl" />
+                                </motion.div>
                                 <div>
-                                    <h3 className="text-xl font-bold text-white mb-1 group-hover:text-primary-400 transition-colors">
+                                    <h3 className="text-sm font-semibold text-raycast-text mb-0.5 group-hover:text-raycast-orange transition-colors duration-150">
                                         New Project
                                     </h3>
-                                    <p className="text-gray-500 text-sm">
+                                    <p className="text-xs text-raycast-text-tertiary">
                                         Create a new project to organize your documents and chats
                                     </p>
                                 </div>
@@ -125,15 +196,15 @@ const Dashboard = () => {
 
                     {/* Featured Projects Section */}
                     <motion.div
-                        initial={{ opacity: 0, y: 20 }}
+                        initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: 0.2 }}
-                        className="mb-8"
+                        transition={{ delay: 0.3, duration: 0.3 }}
+                        className="mb-6"
                     >
-                        <div className="flex items-center justify-between mb-4">
-                            <h2 className="text-2xl font-bold text-white">Featured Projects</h2>
+                        <div className="flex items-center justify-between mb-3">
+                            <h2 className="text-lg font-semibold text-raycast-text">Featured Projects</h2>
                             {projects.length > 0 && (
-                                <span className="text-sm text-gray-500">
+                                <span className="text-xs text-raycast-text-tertiary">
                                     {projects.length} {projects.length === 1 ? 'project' : 'projects'}
                                 </span>
                             )}
@@ -141,112 +212,71 @@ const Dashboard = () => {
 
                         {isLoading ? (
                             <div className="flex items-center justify-center py-12">
-                                <div className="spinner w-12 h-12 border-4 border-primary-500 border-t-transparent rounded-full"></div>
+                                <div className="spinner w-8 h-8 border-2 rounded-full"></div>
                             </div>
                         ) : projects.length === 0 ? (
-                            <div className="card text-center py-12">
-                                <FiFolder className="text-6xl text-gray-600 mx-auto mb-4" />
-                                <p className="text-gray-500 mb-2">No projects yet</p>
-                                <p className="text-sm text-gray-600">
+                            <div className="bg-raycast-surface border border-raycast-border rounded-raycast-lg text-center py-12">
+                                <FiFolder className="text-5xl text-raycast-text-quaternary mx-auto mb-3" />
+                                <p className="text-sm text-raycast-text-secondary mb-1">No projects yet</p>
+                                <p className="text-xs text-raycast-text-tertiary">
                                     Create your first project to get started
                                 </p>
                             </div>
                         ) : (
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                                 {projects.map((project, index) => (
                                     <motion.div
                                         key={project.id}
-                                        initial={{ opacity: 0, y: 20 }}
+                                        initial={{ opacity: 0, y: 10 }}
                                         animate={{ opacity: 1, y: 0 }}
-                                        transition={{ delay: 0.3 + index * 0.1 }}
+                                        transition={{ delay: 0.35 + index * 0.05, duration: 0.3 }}
                                     >
-                                        <ProjectCard project={project} />
+                                        <ProjectCard project={project} onDelete={handleDeleteProject} />
                                     </motion.div>
                                 ))}
                             </div>
                         )}
                     </motion.div>
 
-                    {/* Stats Cards */}
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                        <motion.div
-                            initial={{ opacity: 0, y: 20 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ delay: 0.4 }}
-                            className="card"
-                        >
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <p className="text-gray-500 text-sm mb-1">Total Projects</p>
-                                    <p className="text-3xl font-bold text-white">{projects.length}</p>
-                                </div>
-                                <div className="w-12 h-12 rounded-lg bg-primary-500/20 flex items-center justify-center">
-                                    <FiFolder className="text-primary-400 text-2xl" />
-                                </div>
-                            </div>
-                        </motion.div>
-
-                        <motion.div
-                            initial={{ opacity: 0, y: 20 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ delay: 0.5 }}
-                            className="card"
-                        >
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <p className="text-gray-500 text-sm mb-1">Total Documents</p>
-                                    <p className="text-3xl font-bold text-white">
-                                        {projects.reduce((sum, p) => sum + p.document_count, 0)}
-                                    </p>
-                                </div>
-                                <div className="w-12 h-12 rounded-lg bg-blue-500/20 flex items-center justify-center">
-                                    <FiFileText className="text-blue-400 text-2xl" />
-                                </div>
-                            </div>
-                        </motion.div>
-
-                        <motion.div
-                            initial={{ opacity: 0, y: 20 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ delay: 0.6 }}
-                            className="card"
-                        >
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <p className="text-gray-500 text-sm mb-1">Login Count</p>
-                                    <p className="text-3xl font-bold text-white">{user?.login_count || 0}</p>
-                                </div>
-                                <div className="w-12 h-12 rounded-lg bg-purple-500/20 flex items-center justify-center">
-                                    <FiUsers className="text-purple-400 text-2xl" />
-                                </div>
-                            </div>
-                        </motion.div>
-                    </div>
-
                     {/* Quick Actions */}
                     <motion.div
-                        initial={{ opacity: 0, y: 20 }}
+                        initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: 0.7 }}
+                        transition={{ delay: 0.4, duration: 0.3 }}
                     >
-                        <h2 className="text-2xl font-bold text-white mb-4">Quick Actions</h2>
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                            {filteredActions.map((action, index) => (
+                        <h2 className="text-lg font-semibold text-raycast-text mb-3">Quick Actions</h2>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                            {quickActions.map((action, index) => (
                                 <motion.a
                                     key={action.path}
                                     href={action.path}
-                                    initial={{ opacity: 0, y: 20 }}
+                                    initial={{ opacity: 0, y: 10 }}
                                     animate={{ opacity: 1, y: 0 }}
-                                    transition={{ delay: 0.8 + index * 0.1 }}
-                                    className="card hover:scale-105 transition-transform duration-200 cursor-pointer group"
+                                    whileHover={{ scale: 1.01, y: -1 }}
+                                    whileTap={{ scale: 0.99 }}
+                                    transition={{
+                                        delay: 0.45 + index * 0.05,
+                                        type: 'spring',
+                                        stiffness: 400,
+                                        damping: 25
+                                    }}
+                                    className="bg-raycast-surface border border-raycast-border hover:border-raycast-border-strong rounded-raycast-lg p-3.5 cursor-pointer group transition-all duration-150"
                                 >
                                     <div
-                                        className={`w-14 h-14 rounded-xl bg-gradient-to-br ${action.color} flex items-center justify-center mb-4 shadow-lg group-hover:shadow-xl transition-shadow`}
+                                        className={`w-10 h-10 rounded-lg flex items-center justify-center mb-3 ${action.color === 'orange' ? 'bg-raycast-orange/10' :
+                                            action.color === 'blue' ? 'bg-raycast-blue/10' :
+                                                action.color === 'purple' ? 'bg-raycast-purple/10' :
+                                                    'bg-raycast-surface'
+                                            }`}
                                     >
-                                        <action.icon className="text-white text-2xl" />
+                                        <action.icon className={`text-lg ${action.color === 'orange' ? 'text-raycast-orange' :
+                                            action.color === 'blue' ? 'text-raycast-blue' :
+                                                action.color === 'purple' ? 'text-raycast-purple' :
+                                                    'text-raycast-text'
+                                            }`} />
                                     </div>
-                                    <h3 className="text-xl font-bold text-white mb-2">{action.title}</h3>
-                                    <p className="text-gray-500 text-sm">{action.description}</p>
+                                    <h3 className="text-sm font-semibold text-raycast-text mb-0.5">{action.title}</h3>
+                                    <p className="text-xs text-raycast-text-tertiary">{action.description}</p>
                                 </motion.a>
                             ))}
                         </div>
@@ -260,9 +290,17 @@ const Dashboard = () => {
                 onClose={() => setIsModalOpen(false)}
                 onCreateProject={handleCreateProject}
             />
+
+            {/* Delete Confirmation Modal */}
+            <DeleteConfirmModal
+                isOpen={deleteModal.isOpen}
+                onClose={() => setDeleteModal({ isOpen: false, project: null })}
+                onConfirm={handleConfirmDelete}
+                itemName={deleteModal.project?.name || ''}
+                itemType="project"
+            />
         </div>
     );
 };
 
 export default Dashboard;
-

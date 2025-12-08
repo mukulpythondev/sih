@@ -9,6 +9,7 @@ export const authService = {
             return await mockApi.login(username, password);
         }
         const response = await api.post('/auth/login/', { username, password });
+        // Backend returns: { access, refresh, must_change_password, user }
         return response.data;
     },
 
@@ -48,6 +49,24 @@ export const authService = {
             old_password: oldPassword,
             new_password: newPassword,
         });
+        return response.data;
+    },
+
+    // Sign up
+    signup: async (data) => {
+        if (USE_MOCK_API) {
+            return await mockApi.signup(data);
+        }
+        const response = await api.post('/auth/signup/', data);
+        return response.data;
+    },
+
+    // Reset password
+    resetPassword: async (data) => {
+        if (USE_MOCK_API) {
+            return await mockApi.resetPassword(data);
+        }
+        const response = await api.post('/auth/reset-password/', data);
         return response.data;
     },
 

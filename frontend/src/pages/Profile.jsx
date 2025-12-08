@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { FiUser, FiMail, FiBriefcase, FiShield, FiEdit2, FiLock } from 'react-icons/fi';
+import { FiUser, FiMail, FiBriefcase, FiEdit2, FiLock } from 'react-icons/fi';
 import toast from 'react-hot-toast';
 import useAuthStore from '../store/authStore';
 import { authService } from '../services/authService';
@@ -206,16 +206,7 @@ const Profile = () => {
                                     </div>
                                     <div>
                                         <p className="text-sm text-gray-500">Department</p>
-                                        <p className="text-white font-medium">{user?.department || 'Not set'}</p>
-                                    </div>
-                                </div>
-                                <div className="flex items-center gap-3">
-                                    <div className="w-10 h-10 rounded-lg bg-green-500/20 flex items-center justify-center">
-                                        <FiShield className="text-green-400" />
-                                    </div>
-                                    <div>
-                                        <p className="text-sm text-gray-500">Role</p>
-                                        <p className="text-white font-medium">{user?.role}</p>
+                                        <p className="text-white font-medium">{user?.department || 'Not specified'}</p>
                                     </div>
                                 </div>
                             </div>

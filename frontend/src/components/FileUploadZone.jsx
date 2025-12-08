@@ -58,10 +58,10 @@ const FileUploadZone = ({ onFileSelect, acceptedFileTypes, maxSize = 100 * 1024 
             <div
                 {...getRootProps()}
                 className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all duration-300 ${isDragActive
-                        ? 'border-primary-500 bg-primary-500/10'
-                        : error
-                            ? 'border-red-500 bg-red-500/5'
-                            : 'border-dark-600 hover:border-primary-500/50 bg-dark-800/50'
+                    ? 'border-primary-500 bg-primary-500/10'
+                    : error
+                        ? 'border-red-500 bg-red-500/5'
+                        : 'border-dark-600 hover:border-primary-500/50 bg-dark-800/50'
                     }`}
             >
                 <input {...getInputProps()} />
@@ -85,7 +85,7 @@ const FileUploadZone = ({ onFileSelect, acceptedFileTypes, maxSize = 100 * 1024 
                         <p className="text-sm text-gray-500">or click to browse</p>
                     </div>
                     <p className="text-xs text-gray-600">
-                        Supported: PDF, DOCX, TXT, Images (JPG, PNG), Audio (WAV, MP3, M4A, FLAC, OGG)
+                        Supported: PDF, DOCX, Images (JPEG, PNG), Audio (WAV, MP3, M4A, FLAC, OGG)
                     </p>
                 </motion.div>
             </div>

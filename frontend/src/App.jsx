@@ -6,11 +6,10 @@ import ProtectedRoute from './components/ProtectedRoute';
 // Pages
 import Login from './pages/Login';
 import ChangePassword from './pages/ChangePassword';
-import OnboardingRequest from './pages/OnboardingRequest';
+import SignUp from './pages/SignUp';
 import Dashboard from './pages/Dashboard';
 import Profile from './pages/Profile';
 import DocumentUpload from './pages/DocumentUpload';
-import OnboardingManagement from './pages/OnboardingManagement';
 import ProjectWorkspace from './pages/ProjectWorkspace';
 
 function App() {
@@ -32,7 +31,7 @@ function App() {
         <Routes>
             {/* Public Routes */}
             <Route path="/login" element={<Login />} />
-            <Route path="/onboarding-request" element={<OnboardingRequest />} />
+            <Route path="/signup" element={<SignUp />} />
 
             {/* Protected Routes */}
             <Route
@@ -70,16 +69,8 @@ function App() {
             <Route
                 path="/upload"
                 element={
-                    <ProtectedRoute allowedRoles={['SENIOR_ANALYST', 'SUPER_ADMIN']}>
+                    <ProtectedRoute>
                         <DocumentUpload />
-                    </ProtectedRoute>
-                }
-            />
-            <Route
-                path="/onboarding"
-                element={
-                    <ProtectedRoute allowedRoles={['SUPER_ADMIN']}>
-                        <OnboardingManagement />
                     </ProtectedRoute>
                 }
             />

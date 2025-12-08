@@ -51,7 +51,7 @@ const ChatPanel = ({
     };
 
     return (
-        <div className="flex-1 flex flex-col glass">
+        <div className="flex-1 flex flex-col glass border-x border-dark-600">
             {/* Header */}
             <div className="p-4 border-b border-dark-600 flex items-center justify-between">
                 <div>
@@ -95,8 +95,8 @@ const ChatPanel = ({
                             >
                                 <div
                                     className={`max-w-[80%] rounded-lg p-3 ${message.sender === 'user'
-                                            ? 'bg-gradient-to-r from-primary-600 to-primary-700 text-white'
-                                            : 'glass-light text-gray-200'
+                                        ? 'bg-gradient-to-r from-primary-600 to-primary-700 text-white'
+                                        : 'glass-light text-gray-200'
                                         }`}
                                 >
                                     <p className="text-sm whitespace-pre-wrap break-words">

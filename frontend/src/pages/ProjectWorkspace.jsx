@@ -36,13 +36,25 @@ const ProjectWorkspace = () => {
         toggleRightPanel,
         toggleFullscreen,
         clearCurrentProject,
+        deleteChat,
+        deleteProject,
     } = useProjectStore();
+
+    const [projects, setProjects] = useState([]);
 
     // Load project data
     useEffect(() => {
         const loadProject = async () => {
             try {
                 setIsLoading(true);
+
+                // Load all projects for the dropdown
+                const allProjects = await projectService.getProjects();
+                // Sort by updated_at descending (most recent first)
+                const sortedProjects = allProjects.sort((a, b) =>
+                    new Date(b.updated_at) - new Date(a.updated_at)
+                );
+                setProjects(sortedProjects);
 
                 // Load project details
                 const project = await projectService.getProject(projectId);
@@ -162,12 +174,62 @@ const ProjectWorkspace = () => {
 
     // Handle create new project
     const handleCreateProject = () => {
-        navigate('/dashboard');
+        navigate('/dashboard?openModal=true');
+    };
+
+    // Handle select project
+    const handleSelectProject = (project) => {
+        navigate(`/projects/${project.id}`);
+    };
+
+    // Handle delete chat
+    const handleDeleteChat = async (chatId) => {
+        try {
+            await projectService.deleteChat(chatId);
+            deleteChat(chatId);
+
+            // If we deleted the current chat, select another one or clear
+            if (currentChat?.id === chatId) {
+                const remainingChats = chats.filter(c => c.id !== chatId);
+                if (remainingChats.length > 0) {
+                    await handleSelectChat(remainingChats[0]);
+                } else {
+                    setCurrentChat(null);
+                    setMessages([]);
+                }
+            }
+        } catch (error) {
+            console.error('Error deleting chat:', error);
+            throw error;
+        }
+    };
+
+    // Handle delete project
+    const handleDeleteProject = async (projectId) => {
+        try {
+            await projectService.deleteProject(projectId);
+            deleteProject(projectId);
+
+            // If we deleted the current project, navigate to dashboard
+            if (currentProject?.id === projectId) {
+                navigate('/dashboard');
+            } else {
+                // Refresh projects list
+                const allProjects = await projectService.getProjects();
+                const sortedProjects = allProjects.sort((a, b) =>
+                    new Date(b.updated_at) - new Date(a.updated_at)
+                );
+                setProjects(sortedProjects);
+            }
+        } catch (error) {
+            console.error('Error deleting project:', error);
+            throw error;
+        }
     };
 
     if (isLoading) {
         return (
-            <div className="flex h-screen bg-dark-950 pt-8">
+            <div className="flex h-screen bg-dark-950">
                 <Sidebar />
                 <div className="flex-1 flex items-center justify-center">
                     <div className="spinner w-12 h-12 border-4 border-primary-500 border-t-transparent rounded-full"></div>
@@ -177,7 +239,7 @@ const ProjectWorkspace = () => {
     }
 
     return (
-        <div className="flex h-screen bg-dark-950 pt-8">
+        <div className="flex h-screen bg-dark-950">
             <Sidebar />
 
             <div className="flex-1 flex overflow-hidden">
@@ -203,11 +265,16 @@ const ProjectWorkspace = () => {
                 <StudioPanel
                     chats={chats}
                     currentChat={currentChat}
+                    currentProject={currentProject}
+                    projects={projects}
                     isCollapsed={isRightPanelCollapsed || isFullscreenMode}
                     onToggleCollapse={toggleRightPanel}
                     onSelectChat={handleSelectChat}
+                    onSelectProject={handleSelectProject}
                     onCreateChat={handleCreateChat}
                     onCreateProject={handleCreateProject}
+                    onDeleteChat={handleDeleteChat}
+                    onDeleteProject={handleDeleteProject}
                 />
             </div>
         </div>

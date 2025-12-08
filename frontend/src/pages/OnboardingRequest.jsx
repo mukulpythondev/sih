@@ -68,7 +68,7 @@ const OnboardingRequest = () => {
                         <FiUserPlus className="text-white text-3xl" />
                     </div>
                     <h1 className="text-3xl font-bold gradient-text mb-2">Request Access</h1>
-                    <p className="text-gray-500">Submit a request to join the Jalsetu platform</p>
+                    <p className="text-gray-500">Submit a request to join the DocMind platform</p>
                 </div>
 
                 {/* Form */}

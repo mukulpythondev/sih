@@ -1,12 +1,35 @@
+/* Import Inter font from Google Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* Raycast Design System Variables */
 :root {
-  --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  --dark-bg: #0f172a;
-  --dark-surface: #1e293b;
-  --dark-border: #334155;
+  /* Background colors */
+  --raycast-bg: #1C1C1E;
+  --raycast-surface: #2C2C2E;
+  --raycast-elevated: #3A3A3C;
+
+  /* Border colors */
+  --raycast-border: #38383A;
+  --raycast-border-strong: #48484A;
+
+  /* Text colors */
+  --raycast-text: #FFFFFF;
+  --raycast-text-secondary: #AEAEB2;
+  --raycast-text-tertiary: #636366;
+  --raycast-text-quaternary: #48484A;
+
+  /* Accent colors */
+  --raycast-orange: #FF6B35;
+  --raycast-orange-hover: #FF8555;
+  --raycast-red: #FF453A;
+  --raycast-green: #30D158;
+  --raycast-blue: #0A84FF;
+  --raycast-yellow: #FFD60A;
+  --raycast-purple: #BF5AF2;
 }
 
 * {
@@ -16,13 +39,14 @@
 }
 
 body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: var(--dark-bg);
-  color: #f1f5f9;
+  background-color: var(--raycast-bg);
+  color: var(--raycast-text);
   overflow: hidden;
+  font-size: 14px;
+  line-height: 1.5;
 }
 
 #root {
@@ -31,72 +55,154 @@ body {
   overflow: hidden;
 }
 
-/* Custom Scrollbar */
+/* Raycast-style Custom Scrollbar */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: rgba(15, 23, 42, 0.5);
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(139, 92, 246, 0.5);
-  border-radius: 4px;
+  background: rgba(174, 174, 178, 0.3);
+  border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(139, 92, 246, 0.7);
+  background: rgba(174, 174, 178, 0.5);
 }
 
-/* Glassmorphism utility */
+/* Raycast Glassmorphism Effects */
 .glass {
-  background: rgba(30, 41, 59, 0.7);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(148, 163, 184, 0.1);
+  background: rgba(44, 44, 46, 0.8);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(56, 56, 58, 0.6);
 }
 
 .glass-light {
-  background: rgba(30, 41, 59, 0.5);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border: 1px solid rgba(148, 163, 184, 0.08);
+  background: rgba(44, 44, 46, 0.6);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid rgba(56, 56, 58, 0.4);
 }
 
-/* Gradient text */
+.glass-strong {
+  background: rgba(44, 44, 46, 0.95);
+  backdrop-filter: blur(24px) saturate(200%);
+  -webkit-backdrop-filter: blur(24px) saturate(200%);
+  border: 1px solid rgba(56, 56, 58, 0.8);
+}
+
+/* Gradient text - Raycast style */
 .gradient-text {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #FF6B35 0%, #FF453A 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
 
-/* Button styles */
+/* Raycast Button Styles */
 .btn-primary {
-  @apply bg-gradient-to-r from-primary-600 to-primary-700 hover:from-primary-700 hover:to-primary-800 text-white font-medium py-2 px-6 rounded-lg transition-all duration-200 shadow-lg shadow-primary-500/30 hover:shadow-primary-500/50;
+  @apply bg-raycast-orange hover:bg-raycast-orange-hover text-white font-medium py-2.5 px-4 rounded-raycast transition-all duration-150 shadow-sm;
+}
+
+.btn-primary:active {
+  transform: scale(0.98);
 }
 
 .btn-secondary {
-  @apply bg-dark-700 hover:bg-dark-600 text-white font-medium py-2 px-6 rounded-lg transition-all duration-200 border border-dark-600;
+  @apply bg-raycast-surface hover:bg-raycast-elevated text-raycast-text font-medium py-2.5 px-4 rounded-raycast transition-all duration-150 border border-raycast-border;
+}
+
+.btn-secondary:active {
+  transform: scale(0.98);
 }
 
 .btn-ghost {
-  @apply bg-transparent hover:bg-dark-700/50 text-gray-300 font-medium py-2 px-6 rounded-lg transition-all duration-200;
+  @apply bg-transparent hover:bg-raycast-surface/50 text-raycast-text-secondary hover:text-raycast-text font-medium py-2.5 px-4 rounded-raycast transition-all duration-150;
 }
 
-/* Input styles */
+.btn-ghost:active {
+  transform: scale(0.98);
+}
+
+.btn-destructive {
+  @apply bg-raycast-red/10 hover:bg-raycast-red/20 text-raycast-red font-medium py-2.5 px-4 rounded-raycast transition-all duration-150 border border-raycast-red/30;
+}
+
+.btn-destructive:active {
+  transform: scale(0.98);
+}
+
+/* Raycast Input Styles */
 .input-field {
-  @apply w-full bg-dark-800 border border-dark-600 rounded-lg px-4 py-2.5 text-gray-100 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200;
+  @apply w-full bg-raycast-surface border border-raycast-border rounded-raycast px-3 py-2.5 text-raycast-text placeholder-raycast-text-tertiary focus:outline-none focus:ring-2 focus:ring-raycast-orange/50 focus:border-raycast-orange transition-all duration-150;
+  position: relative;
 }
 
-/* Card styles */
+.input-field:hover {
+  @apply border-raycast-border-strong;
+}
+
+/* Raycast Card Styles */
 .card {
-  @apply glass rounded-xl p-6 shadow-xl;
+  @apply rounded-raycast-lg p-4 shadow-raycast;
+  background: rgba(44, 44, 46, 0.8);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(56, 56, 58, 0.6);
 }
 
-/* Animations */
+.card-hover {
+  @apply rounded-raycast-lg p-4 shadow-raycast hover:shadow-raycast-hover transition-all duration-200 cursor-pointer;
+  background: rgba(44, 44, 46, 0.8);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(56, 56, 58, 0.6);
+}
+
+.card-hover:active {
+  transform: scale(0.99);
+}
+
+.card-interactive {
+  @apply rounded-raycast-lg p-4 shadow-raycast hover:shadow-raycast-hover transition-all duration-200 cursor-pointer hover:bg-raycast-surface/90 hover:border-raycast-border-strong;
+  background: rgba(44, 44, 46, 0.8);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(56, 56, 58, 0.6);
+}
+
+.card-interactive:active {
+  transform: scale(0.99);
+}
+
+/* Micro-animations */
+.animate-press {
+  @apply transition-transform duration-100;
+}
+
+.animate-press:active {
+  transform: scale(0.97);
+}
+
+.animate-lift {
+  @apply hover:-translate-y-0.5 transition-transform duration-200;
+}
+
+.animate-glow {
+  transition-property: box-shadow;
+  transition-duration: 300ms;
+}
+
+.animate-glow:hover {
+  box-shadow: 0 0 20px rgba(255, 107, 53, 0.3);
+}
+
+/* Shimmer effect for loading states */
 @keyframes shimmer {
   0% {
     background-position: -1000px 0;
@@ -109,11 +215,14 @@ body {
 
 .shimmer {
   animation: shimmer 2s infinite;
-  background: linear-gradient(to right, transparent 0%, rgba(139, 92, 246, 0.1) 50%, transparent 100%);
+  background: linear-gradient(to right,
+      transparent 0%,
+      rgba(255, 107, 53, 0.1) 50%,
+      transparent 100%);
   background-size: 1000px 100%;
 }
 
-/* Loading spinner */
+/* Loading spinner - Raycast style */
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -121,7 +230,49 @@ body {
 }
 
 .spinner {
-  animation: spin 1s linear infinite;
+  animation: spin 0.8s linear infinite;
+  border-color: var(--raycast-border);
+  border-top-color: var(--raycast-orange);
+}
+
+/* Skeleton loading */
+.skeleton {
+  @apply bg-raycast-surface animate-pulse-soft rounded-raycast;
+}
+
+/* Badge styles */
+.badge {
+  @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium;
+}
+
+.badge-orange {
+  @apply bg-raycast-orange/10 text-raycast-orange border border-raycast-orange/30;
+}
+
+.badge-green {
+  @apply bg-raycast-green/10 text-raycast-green border border-raycast-green/30;
+}
+
+.badge-red {
+  @apply bg-raycast-red/10 text-raycast-red border border-raycast-red/30;
+}
+
+.badge-blue {
+  @apply bg-raycast-blue/10 text-raycast-blue border border-raycast-blue/30;
+}
+
+.badge-gray {
+  @apply bg-raycast-surface text-raycast-text-secondary border border-raycast-border;
+}
+
+/* Divider */
+.divider {
+  @apply border-t border-raycast-border;
+}
+
+/* Focus visible styles for accessibility */
+*:focus-visible {
+  @apply outline-none ring-2 ring-raycast-orange/50 ring-offset-2 ring-offset-raycast-bg;
 }
 
 /* Vertical text for collapsed panels */
@@ -129,4 +280,22 @@ body {
   writing-mode: vertical-rl;
   text-orientation: mixed;
   transform: rotate(180deg);
+}
+
+/* List item hover effect - Raycast style */
+.list-item {
+  @apply px-3 py-2 rounded-raycast transition-all duration-150 cursor-pointer;
+}
+
+.list-item:hover {
+  @apply bg-raycast-surface;
+}
+
+.list-item.active {
+  @apply bg-raycast-surface border-l-2 border-raycast-orange;
+}
+
+/* Tooltip */
+.tooltip {
+  @apply absolute z-50 px-2 py-1 text-xs font-medium text-raycast-text bg-raycast-elevated border border-raycast-border rounded shadow-raycast-lg;
 }

@@ -1,9 +1,10 @@
 import React from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import useAuthStore from '../store/authStore';
 
-const ProtectedRoute = ({ children, allowedRoles = [] }) => {
-    const { isAuthenticated, isLoading, user } = useAuthStore();
+const ProtectedRoute = ({ children }) => {
+    const { isAuthenticated, user, isLoading } = useAuthStore();
+    const location = useLocation();
 
     if (isLoading) {
         return (
@@ -14,19 +15,7 @@ const ProtectedRoute = ({ children, allowedRoles = [] }) => {
     }
 
     if (!isAuthenticated) {
-        return <Navigate to="/login" replace />;
-    }
-
-    // Check role-based access
-    if (allowedRoles.length > 0 && user && !allowedRoles.includes(user.role)) {
-        return (
-            <div className="flex items-center justify-center h-screen bg-dark-950">
-                <div className="card max-w-md text-center">
-                    <h2 className="text-2xl font-bold text-red-400 mb-2">Access Denied</h2>
-                    <p className="text-gray-400">You don't have permission to access this page.</p>
-                </div>
-            </div>
-        );
+        return <Navigate to="/login" state={{ from: location }} replace />;
     }
 
     return children;

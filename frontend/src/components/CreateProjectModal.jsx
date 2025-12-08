@@ -48,35 +48,39 @@ const CreateProjectModal = ({ isOpen, onClose, onCreateProject }) => {
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
+                        transition={{ duration: 0.15 }}
                         onClick={handleClose}
-                        className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50"
+                        className="fixed inset-0 bg-black/70 backdrop-blur-md z-50"
                     />
 
                     {/* Modal */}
-                    <div className="fixed inset-0 flex items-center justify-center z-50 p-4">
+                    <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
                         <motion.div
-                            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                            initial={{ opacity: 0, scale: 0.95, y: 10 }}
                             animate={{ opacity: 1, scale: 1, y: 0 }}
-                            exit={{ opacity: 0, scale: 0.95, y: 20 }}
-                            className="glass rounded-2xl p-6 w-full max-w-md shadow-2xl"
+                            exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                            transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+                            className="bg-raycast-surface border border-raycast-border rounded-raycast-lg p-5 w-full max-w-md shadow-raycast-lg pointer-events-auto"
                             onClick={(e) => e.stopPropagation()}
                         >
                             {/* Header */}
-                            <div className="flex items-center justify-between mb-6">
-                                <h2 className="text-2xl font-bold gradient-text">Create New Project</h2>
-                                <button
+                            <div className="flex items-center justify-between mb-5">
+                                <h2 className="text-lg font-semibold text-raycast-text">Create New Project</h2>
+                                <motion.button
+                                    whileHover={{ scale: 1.1 }}
+                                    whileTap={{ scale: 0.95 }}
                                     onClick={handleClose}
                                     disabled={isSubmitting}
-                                    className="p-2 hover:bg-dark-700 rounded-lg transition-colors"
+                                    className="p-1.5 hover:bg-raycast-elevated rounded-lg transition-colors"
                                 >
-                                    <FiX className="text-xl text-gray-400" />
-                                </button>
+                                    <FiX className="text-lg text-raycast-text-secondary" />
+                                </motion.button>
                             </div>
 
                             {/* Form */}
                             <form onSubmit={handleSubmit} className="space-y-4">
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-300 mb-2">
+                                    <label className="block text-xs font-medium text-raycast-text-secondary mb-1.5">
                                         Project Name *
                                     </label>
                                     <input
@@ -85,13 +89,13 @@ const CreateProjectModal = ({ isOpen, onClose, onCreateProject }) => {
                                         onChange={(e) => setName(e.target.value)}
                                         placeholder="Enter project name"
                                         disabled={isSubmitting}
-                                        className="input-field"
+                                        className="input-field text-sm"
                                         autoFocus
                                     />
                                 </div>
 
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-300 mb-2">
+                                    <label className="block text-xs font-medium text-raycast-text-secondary mb-1.5">
                                         Description
                                     </label>
                                     <textarea
@@ -99,25 +103,25 @@ const CreateProjectModal = ({ isOpen, onClose, onCreateProject }) => {
                                         onChange={(e) => setDescription(e.target.value)}
                                         placeholder="Enter project description (optional)"
                                         disabled={isSubmitting}
-                                        rows={4}
-                                        className="input-field resize-none"
+                                        rows={3}
+                                        className="input-field resize-none text-sm"
                                     />
                                 </div>
 
                                 {/* Actions */}
-                                <div className="flex gap-3 pt-2">
+                                <div className="flex gap-2 pt-2">
                                     <button
                                         type="button"
                                         onClick={handleClose}
                                         disabled={isSubmitting}
-                                        className="btn-secondary flex-1"
+                                        className="btn-secondary flex-1 text-sm"
                                     >
                                         Cancel
                                     </button>
                                     <button
                                         type="submit"
                                         disabled={isSubmitting}
-                                        className="btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                                        className="btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
                                     >
                                         {isSubmitting ? 'Creating...' : 'Create Project'}
                                     </button>
