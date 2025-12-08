@@ -1,7 +1,13 @@
+# main.py
 """
-Offline Multimodal RAG - Performance Profiled Version
-
-Added timing logs throughout the pipeline to identify bottlenecks
+FastAPI AI service (project-scoped Qdrant collections + per-project BM25)
+Features:
+ - Tesseract OCR for image text extraction
+ - CLIP image vectors + text vectors (sentence-transformers)
+ - Per-project Qdrant collections: "project_<project_id>"
+ - Per-project BM25 indices (in-memory)
+ - Text-only LLM generation via Ollama
+ - Fallback for legacy single-vector Qdrant deployments (concatenate vectors)
 """
 
 import os
@@ -12,7 +18,7 @@ from pathlib import Path
 from typing import List, Dict, Any, TypedDict, Optional
 from datetime import datetime
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -33,44 +39,47 @@ from rank_bm25 import BM25Okapi
 # HTTP client
 import requests
 
-# -----------------------------------------------------------------------------
-# Performance Timer Utility
-# -----------------------------------------------------------------------------
+# OCR + Image
+import pytesseract
+from PIL import Image
+import base64
+
+# ---------------------------------------------------------------------------
+# Timer
+# ---------------------------------------------------------------------------
 class Timer:
-    """Simple context manager for timing code blocks"""
     def __init__(self, name: str):
         self.name = name
         self.start = None
-        
     def __enter__(self):
         self.start = time.time()
         print(f"⏱️  [{self.name}] Starting...")
         return self
-        
     def __exit__(self, *args):
         elapsed = time.time() - self.start
         print(f"⏱️  [{self.name}] Completed in {elapsed:.3f}s")
 
-# -----------------------------------------------------------------------------
-# Configuration
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
 class Config:
     UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "uploads"))
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
-    COLLECTION_NAME = os.getenv("COLLECTION_NAME", "multimodal_docs")
     OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
     SLM_MODEL = os.getenv("SLM_MODEL", "phi3:latest")
     LLM_MODEL = os.getenv("LLM_MODEL", "qwen2.5:3b")
-    VLM_MODEL = os.getenv("VLM_MODEL", "qwen2.5vl:latest")
     EMBED_MODEL = os.getenv("EMBED_MODEL", "BAAI/bge-m3")
+    CLIP_MODEL = os.getenv("CLIP_MODEL", "clip-ViT-B-32")
     TOP_K = int(os.getenv("TOP_K", "5"))
     DENSE_LIMIT = int(os.getenv("DENSE_LIMIT", "10"))
     SPARSE_LIMIT = int(os.getenv("SPARSE_LIMIT", "10"))
+    # Minimum image vector length threshold to consider image vector valid
+    MIN_IMAGE_VEC_LEN = 4
 
-# -----------------------------------------------------------------------------
-# Pydantic models
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Pydantic / types
+# ---------------------------------------------------------------------------
 class UploadResponse(BaseModel):
     message: str
     document_id: str
@@ -78,7 +87,9 @@ class UploadResponse(BaseModel):
     chunks_processed: int
 
 class QueryRequest(BaseModel):
+    project_id: str
     query: str
+    chat_id: Optional[str] = None
     top_k: int = Config.TOP_K
 
 class Citation(BaseModel):
@@ -100,183 +111,181 @@ class RAGState(TypedDict):
     answer: str
     citations: List[Dict[str, Any]]
 
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # App init
-# -----------------------------------------------------------------------------
-app = FastAPI(title="Offline Multimodal RAG (Profiled)", version="1.0.0")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"]
-)
+# ---------------------------------------------------------------------------
+app = FastAPI(title="AI Service - Project Qdrant + BM25", version="1.0.0")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-# -----------------------------------------------------------------------------
-# Clients & Models
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Qdrant client + capabilities
+# ---------------------------------------------------------------------------
 qdrant_client = QdrantClient(url=Config.QDRANT_URL)
 
-# Load embedding model
-with Timer("Load Embedding Model"):
+# We'll attempt to use named vectors; if the server or client doesn't support it,
+# we'll fallback to legacy single-vector mode by concatenating vectors.
+USE_NAMED_VECTORS = True
+
+def detect_qdrant_named_vector_support():
+    global USE_NAMED_VECTORS
     try:
-        embedder = SentenceTransformer(Config.EMBED_MODEL)
-        print(f"✅ Loaded embedding model: {Config.EMBED_MODEL}")
+        # Try to create a temporary collection using named vectors (in memory test)
+        test_name = f"__temp_named_vectors_test_{uuid.uuid4().hex[:6]}"
+        text_size = 4
+        image_size = 4
+        qdrant_client.create_collection(
+            collection_name=test_name,
+            vectors_config={
+                "text": VectorParams(size=text_size, distance=Distance.COSINE),
+                "image": VectorParams(size=image_size, distance=Distance.COSINE)
+            }
+        )
+        qdrant_client.delete_collection(test_name)
+        USE_NAMED_VECTORS = True
+        print("✅ Qdrant supports named vectors.")
     except Exception as e:
-        print(f"⚠️ Failed to load {Config.EMBED_MODEL}, using fallback: {e}")
-        embedder = SentenceTransformer("all-MiniLM-L6-v2")
+        USE_NAMED_VECTORS = False
+        print(f"⚠️ Qdrant named-vectors unsupported or client mismatch: {e}. Falling back to single-vector mode.")
+
+detect_qdrant_named_vector_support()
+
+# ---------------------------------------------------------------------------
+# Embedders
+# ---------------------------------------------------------------------------
+with Timer("Load Text Embedding Model"):
+    try:
+        text_embedder = SentenceTransformer(Config.EMBED_MODEL)
+        print(f"✅ Loaded text embedder: {Config.EMBED_MODEL}")
+    except Exception as e:
+        print(f"⚠️ Failed to load {Config.EMBED_MODEL}: {e}")
+        text_embedder = SentenceTransformer("all-MiniLM-L6-v2")
+
+with Timer("Load CLIP Image Model"):
+    try:
+        image_embedder = SentenceTransformer(Config.CLIP_MODEL)
+        print(f"✅ Loaded image embedder: {Config.CLIP_MODEL}")
+    except Exception as e:
+        print(f"⚠️ Failed to load {Config.CLIP_MODEL}: {e}")
+        image_embedder = text_embedder
 
 def embed_text(text: str) -> List[float]:
-    """Embed text with timing"""
     start = time.time()
-    vec = embedder.encode(text, show_progress_bar=False)
+    vec = text_embedder.encode(text, show_progress_bar=False)
     elapsed = time.time() - start
-    print(f"    ⏱️  Embedding ({len(text)} chars) took {elapsed:.3f}s")
+    print(f"    ⏱️  Embedding text ({len(text)} chars) took {elapsed:.3f}s")
     return vec.tolist()
 
-# In-memory BM25 structures
-bm25_texts: List[str] = []
-bm25_point_ids: List[str] = []
-bm25_index: BM25Okapi = None
-point_metadata: Dict[str, Dict[str, Any]] = {}
+def embed_image_pil(img: Image.Image) -> List[float]:
+    start = time.time()
+    vec = image_embedder.encode([img], show_progress_bar=False)
+    elapsed = time.time() - start
+    print(f"    ⏱️  Embedding image took {elapsed:.3f}s")
+    return vec[0].tolist()
 
-# Model cache
-available_models_cache: Optional[List[str]] = None
+# ---------------------------------------------------------------------------
+# Per-project BM25 & metadata in-memory structures
+# ---------------------------------------------------------------------------
+# Each project_id has:
+#   - bm25_texts_by_project[project_id] = [searchable_texts...]
+#   - bm25_point_ids_by_project[project_id] = [point_ids...]
+#   - bm25_index_by_project[project_id] = BM25Okapi(...)
+#   - metadata_by_project[project_id] = { point_id: payload }
+bm25_texts_by_project: Dict[str, List[str]] = {}
+bm25_point_ids_by_project: Dict[str, List[str]] = {}
+bm25_index_by_project: Dict[str, BM25Okapi] = {}
+point_metadata_by_project: Dict[str, Dict[str, Dict[str, Any]]] = {}
 
-# -----------------------------------------------------------------------------
-# Collection management - SINGLE vector (text only, images stored as base64)
-# -----------------------------------------------------------------------------
-def ensure_collection():
-    with Timer("Check/Create Qdrant Collection"):
+# ---------------------------------------------------------------------------
+# Helper: collection name
+# ---------------------------------------------------------------------------
+def get_collection_name(project_id: str) -> str:
+    # sanitize project_id if necessary
+    return f"project_{project_id}"
+
+# ---------------------------------------------------------------------------
+# Ensure collection (dynamic)
+# ---------------------------------------------------------------------------
+def ensure_collection(collection_name: str):
+    with Timer(f"Check/Create collection [{collection_name}]"):
         try:
-            collection_info = qdrant_client.get_collection(collection_name=Config.COLLECTION_NAME)
-            print(f"✅ Collection '{Config.COLLECTION_NAME}' exists with {collection_info.points_count} points")
+            qdrant_client.get_collection(collection_name=collection_name)
+            print(f"✅ Collection '{collection_name}' exists.")
+            return
         except Exception:
-            print(f"📦 Creating collection '{Config.COLLECTION_NAME}'...")
-            vector_size = len(embed_text("test"))
-            qdrant_client.create_collection(
-                collection_name=Config.COLLECTION_NAME,
-                vectors_config=VectorParams(
-                    size=vector_size,
-                    distance=Distance.COSINE
-                ),
-            )
-            print(f"✅ Collection created with vector size: {vector_size}")
+            print(f"📦 Creating collection '{collection_name}'...")
+            if USE_NAMED_VECTORS:
+                # compute sizes
+                text_size = len(embed_text("test"))
+                image_size = len(embed_image_pil(Image.new('RGB', (32, 32))))
+                qdrant_client.create_collection(
+                    collection_name=collection_name,
+                    vectors_config={
+                        "text": VectorParams(size=text_size, distance=Distance.COSINE),
+                        "image": VectorParams(size=image_size, distance=Distance.COSINE)
+                    }
+                )
+                print(f"✅ Created named-vector collection: text={text_size}, image={image_size}")
+            else:
+                # fallback: single-vector size = text + image
+                text_size = len(embed_text("test"))
+                image_size = len(embed_image_pil(Image.new('RGB', (32, 32))))
+                qdrant_client.create_collection(
+                    collection_name=collection_name,
+                    vectors_config=VectorParams(size=text_size + image_size, distance=Distance.COSINE)
+                )
+                print(f"✅ Created single-vector collection (size={text_size + image_size})")
 
-ensure_collection()
-
-# -----------------------------------------------------------------------------
-# Ollama utilities
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Ollama (text-only) utilities
+# ---------------------------------------------------------------------------
 def get_available_models() -> List[str]:
-    """Get available Ollama models"""
-    global available_models_cache
-    
-    if available_models_cache:
-        return available_models_cache
-    
     try:
-        with Timer("Fetch Ollama Models"):
-            r = requests.get(f"{Config.OLLAMA_URL.rstrip('/')}/api/tags", timeout=5)
-            if r.status_code == 200:
-                data = r.json()
-                available_models_cache = [m.get("name", "") for m in data.get("models", [])]
-                print(f"    Available models: {available_models_cache}")
-                return available_models_cache
+        r = requests.get(f"{Config.OLLAMA_URL.rstrip('/')}/api/tags", timeout=5)
+        if r.status_code == 200:
+            data = r.json()
+            return [m.get("name", "") for m in data.get("models", [])]
     except Exception as e:
-        print(f"⚠️ Failed to get models: {e}")
-    
+        print(f"⚠️ Failed to fetch Ollama models: {e}")
     return []
 
 def normalize_model_name(model: str) -> str:
-    """Normalize model name to match available models"""
     available = get_available_models()
-    
     if model in available:
         return model
-    
     for avail in available:
         if model in avail or avail in model:
-            print(f"📝 Model normalized: '{model}' -> '{avail}'")
             return avail
-        
-        model_base = model.replace("-", "").replace("_", "").split(":")[0].lower()
-        avail_base = avail.replace("-", "").replace("_", "").split(":")[0].lower()
-        if model_base == avail_base:
-            print(f"📝 Model normalized: '{model}' -> '{avail}'")
-            return avail
-    
-    print(f"⚠️ Model '{model}' not found in: {available}")
     return model
 
-def call_ollama(
-    model: str,
-    prompt: str,
-    images: List[str] = None,
-    max_tokens: int = 1024,
-    temperature: float = 0.7
-) -> str:
-    """Call Ollama with detailed timing"""
-    
+def call_ollama(model: str, prompt: str, max_tokens: int = 1024, temperature: float = 0.7) -> str:
     model = normalize_model_name(model)
     url = f"{Config.OLLAMA_URL.rstrip('/')}/api/generate"
-    
     payload = {
         "model": model,
         "prompt": prompt,
         "stream": False,
-        "options": {
-            "num_predict": max_tokens,
-            "temperature": temperature,
-        }
+        "options": {"num_predict": max_tokens, "temperature": temperature}
     }
-    
-    if images and any(x in model.lower() for x in ["vl", "vision", "llava", "bakllava"]):
-        clean_images = []
-        for img in images:
-            if img.startswith("data:"):
-                img = img.split(",", 1)[1] if "," in img else img
-            clean_images.append(img)
-        payload["images"] = clean_images
-        print(f"    📷 Including {len(clean_images)} images")
-    
     try:
-        print(f"🤖 Calling {model} (prompt: {len(prompt)} chars, max_tokens: {max_tokens})")
         start = time.time()
-        
         r = requests.post(url, json=payload, timeout=180)
-        
         elapsed = time.time() - start
-        
         if r.status_code != 200:
-            error_msg = r.text[:200]
-            print(f"❌ Ollama error {r.status_code} after {elapsed:.3f}s: {error_msg}")
-            return f"[LLM_ERROR] {r.status_code}: {error_msg}"
-        
+            return f"[LLM_ERROR] {r.status_code}: {r.text[:200]}"
         data = r.json()
-        
         if "response" in data:
-            result = data["response"].strip()
-            print(f"✅ LLM response received in {elapsed:.3f}s ({len(result)} chars)")
-            return result
-        
-        print(f"⚠️ Unexpected response format after {elapsed:.3f}s")
+            return data["response"].strip()
         return json.dumps(data)
-        
     except requests.exceptions.Timeout:
-        print(f"❌ Timeout after 180s")
         return "[LLM_ERROR] Request timed out"
     except Exception as e:
-        print(f"❌ Error: {e}")
         return f"[LLM_ERROR] {str(e)}"
 
-# -----------------------------------------------------------------------------
-# Document processing
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Document processing (PDF)
+# ---------------------------------------------------------------------------
 def process_pdf(file_path: str) -> List[Dict[str, Any]]:
-    """Process PDF with timing"""
     print(f"📄 Processing PDF: {file_path}")
-    
     with Timer("PDF Partition"):
         elements = partition_pdf(
             filename=file_path,
@@ -285,15 +294,9 @@ def process_pdf(file_path: str) -> List[Dict[str, Any]]:
             extract_image_block_types=["Image"],
             extract_image_block_to_payload=True
         )
-    
     with Timer("PDF Chunking"):
-        chunks = chunk_by_title(
-            elements,
-            max_characters=3000,
-            new_after_n_chars=2400,
-            combine_text_under_n_chars=500
-        )
-    
+        chunks = chunk_by_title(elements, max_characters=3000, new_after_n_chars=2400, combine_text_under_n_chars=500)
+
     processed = []
     for chunk in chunks:
         chunk_data = {
@@ -301,12 +304,8 @@ def process_pdf(file_path: str) -> List[Dict[str, Any]]:
             "text": chunk.text or "",
             "tables": [],
             "images": [],
-            "metadata": {
-                "page": getattr(getattr(chunk, 'metadata', None), 'page_number', 0),
-                "type": "mixed"
-            }
+            "metadata": {"page": getattr(getattr(chunk, 'metadata', None), 'page_number', 0), "type": "mixed"}
         }
-        
         if hasattr(chunk, "metadata") and hasattr(chunk.metadata, "orig_elements"):
             for el in chunk.metadata.orig_elements:
                 et = type(el).__name__
@@ -320,328 +319,342 @@ def process_pdf(file_path: str) -> List[Dict[str, Any]]:
                     if img_b64:
                         chunk_data["images"].append(img_b64)
                         chunk_data["metadata"]["type"] = "image"
-        
         processed.append(chunk_data)
-    
     print(f"✅ Extracted {len(processed)} chunks")
     return processed
 
-# -----------------------------------------------------------------------------
-# Summarizer
-# -----------------------------------------------------------------------------
-def create_multimodal_summary(chunk: Dict[str, Any]) -> str:
-    """Create summary with timing"""
-    short_text = (chunk.get("text") or "")[:1200]
-    
-    prompt = f"""Summarize this text in 2-3 sentences. Be concise.
+# ---------------------------------------------------------------------------
+# Image processing: OCR + CLIP
+# ---------------------------------------------------------------------------
+def process_image(file_path: str, filename: str) -> List[Dict[str, Any]]:
+    print(f"🖼️  Processing image: {file_path}")
+    with Timer("Load Image"):
+        img = Image.open(file_path).convert('RGB')
+        width, height = img.size
+        with open(file_path, 'rb') as f:
+            img_b64 = base64.b64encode(f.read()).decode('utf-8')
 
-Text:
-{short_text}
+    chunk_data = {
+        "chunk_id": str(uuid.uuid4()),
+        "text": "",
+        "ocr_text": "",
+        "tables": [],
+        "images": [img_b64],
+        "metadata": {"page": 1, "type": "image", "width": width, "height": height}
+    }
 
-Summary:"""
-    
-    with Timer(f"SLM Summary (chunk {chunk.get('chunk_id', '')[:8]})"):
-        out = call_ollama(Config.SLM_MODEL, prompt, images=None, max_tokens=200, temperature=0.3)
-    
-    if out.startswith("[LLM_ERROR]"):
-        return short_text[:400]
-    
-    return out.strip() or short_text[:400]
+    with Timer("Tesseract OCR"):
+        try:
+            ocr_result = pytesseract.image_to_string(img)
+            chunk_data["ocr_text"] = ocr_result.strip()
+            if ocr_result.strip():
+                chunk_data["text"] = ocr_result.strip()
+                print(f"    OCR extracted {len(ocr_result.split())} words")
+        except Exception as e:
+            print(f"    OCR failed: {e}")
 
-# -----------------------------------------------------------------------------
-# Store in Qdrant + BM25
-# -----------------------------------------------------------------------------
-def store_in_vectordb(chunks: List[Dict[str, Any]], document_id: str, filename: str):
-    """Store with detailed timing"""
-    global bm25_texts, bm25_point_ids, bm25_index, point_metadata
-    
-    print(f"💾 Storing {len(chunks)} chunks...")
-    
-    with Timer("Generate Summaries"):
+    # optional short caption if OCR empty
+    if not chunk_data["text"]:
+        prompt = "Summarize the visible contents of the image in 1-2 sentences."
+        with Timer("Optional caption via SLM"):
+            caption = call_ollama(Config.SLM_MODEL, prompt, max_tokens=150, temperature=0.2)
+            if not caption.startswith("[LLM_ERROR]"):
+                chunk_data["text"] = caption.strip()
+
+    # embed image
+    with Timer("Image embedding (CLIP)"):
+        try:
+            img_vec = embed_image_pil(img)
+            chunk_data["image_vector"] = img_vec
+        except Exception as e:
+            print(f"    Image embedding failed: {e}")
+            chunk_data["image_vector"] = []
+
+    print(f"✅ Created 1 chunk for image (ocr_len={len(chunk_data['ocr_text'])})")
+    return [chunk_data]
+
+# ---------------------------------------------------------------------------
+# Store in Qdrant + per-project BM25
+# ---------------------------------------------------------------------------
+def store_in_vectordb(chunks: List[Dict[str, Any]], document_id: str, filename: str, project_id: str, chat_id: Optional[str] = None):
+    """
+    Stores chunks in the Qdrant collection for this project.
+    Also updates per-project BM25 and metadata maps.
+    """
+    print(f"💾 Storing {len(chunks)} chunks into project {project_id} (chat={chat_id})...")
+    collection = get_collection_name(project_id)
+    ensure_collection(collection)
+
+    # prepare per-project in-memory maps
+    bm25_texts = bm25_texts_by_project.setdefault(project_id, [])
+    bm25_point_ids = bm25_point_ids_by_project.setdefault(project_id, [])
+    metadata_map = point_metadata_by_project.setdefault(project_id, {})
+
+    with Timer("Generate Summaries (SLM)"):
         summaries = []
-        for i, chunk in enumerate(chunks):
-            print(f"  Processing chunk {i+1}/{len(chunks)}")
-            summary = create_multimodal_summary(chunk)
+        for chunk in chunks:
+            short_text = (chunk.get("text") or "")[:1200]
+            prompt = f"Summarize this text in 2-3 sentences.\n\nText:\n{short_text}\n\nSummary:"
+            summary = call_ollama(Config.SLM_MODEL, prompt, max_tokens=200, temperature=0.3)
+            if summary.startswith("[LLM_ERROR]"):
+                summary = short_text[:400]
             summaries.append(summary)
-    
+
     with Timer("Generate Embeddings"):
         points = []
         for i, (chunk, summary) in enumerate(zip(chunks, summaries)):
             searchable_text = summary
             if chunk.get("text"):
                 searchable_text = (searchable_text + "\n\n" + chunk.get("text")).strip()
-            
+
             print(f"  Embedding chunk {i+1}/{len(chunks)}")
-            vec = embed_text(searchable_text[:2000])  # Limit text length
+            text_vec = embed_text(searchable_text[:2000])
+            image_vec = chunk.get("image_vector") or None
+
             pid = str(uuid.uuid4())
-            
             payload = {
                 "document_id": document_id,
                 "chunk_id": chunk["chunk_id"],
                 "filename": filename,
                 "text": chunk.get("text", ""),
+                "ocr_text": chunk.get("ocr_text", ""),
                 "tables": json.dumps(chunk.get("tables", [])),
                 "images": json.dumps(chunk.get("images", [])),
                 "page": chunk.get("metadata", {}).get("page", 0),
                 "content_type": chunk.get("metadata", {}).get("type", "mixed"),
-                "searchable_text": searchable_text
+                "searchable_text": searchable_text,
+                "chat_id": chat_id
             }
-            
-            # FIXED: Use 'vector' not 'vectors' for single vector
-            points.append(PointStruct(id=pid, vector=vec, payload=payload))
+
+            if USE_NAMED_VECTORS:
+                vectors = {"text": text_vec}
+                if image_vec and len(image_vec) >= Config.MIN_IMAGE_VEC_LEN:
+                    vectors["image"] = image_vec
+                points.append(PointStruct(id=pid, vectors=vectors, payload=payload))
+            else:
+                # legacy: combine text+image vectors
+                if image_vec and len(image_vec) >= Config.MIN_IMAGE_VEC_LEN:
+                    combined = text_vec + image_vec
+                else:
+                    combined = text_vec
+                points.append(PointStruct(id=pid, vector=combined, payload=payload))
+
             bm25_point_ids.append(pid)
             bm25_texts.append(searchable_text)
-            point_metadata[pid] = payload
-    
+            metadata_map[pid] = payload
+
     with Timer("Upsert to Qdrant"):
         if points:
-            qdrant_client.upsert(
-                collection_name=Config.COLLECTION_NAME,
-                points=points
-            )
-            print(f"✅ Upserted {len(points)} points")
-    
+            # qdrant_client.upsert supports list[PointStruct]
+            qdrant_client.upsert(collection_name=collection, points=points)
+            print(f"✅ Upserted {len(points)} points into {collection}")
+
     with Timer("Rebuild BM25 Index"):
         if bm25_texts:
             tokenized = [doc.split() for doc in bm25_texts]
             bm25_index = BM25Okapi(tokenized)
-            print(f"✅ BM25 index updated ({len(bm25_texts)} docs)")
+            bm25_index_by_project[project_id] = bm25_index
+            print(f"✅ BM25 index updated for project {project_id} ({len(bm25_texts)} docs)")
 
-# -----------------------------------------------------------------------------
-# Hybrid retrieval
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Hybrid search (per-project)
+# ---------------------------------------------------------------------------
 def rrf_fusion(dense_hits: List[Any], sparse_ids: List[str], top_k: int) -> List[Dict[str, Any]]:
-    """RRF fusion with timing"""
     score_map = {}
     k = 60
-    
     for rank, hit in enumerate(dense_hits, start=1):
         pid = hit.id
         score_map.setdefault(pid, 0.0)
         score_map[pid] += 1.0 / (k + rank)
-    
     for rank, pid in enumerate(sparse_ids, start=1):
         score_map.setdefault(pid, 0.0)
         score_map[pid] += 1.0 / (k + rank)
-    
     merged = sorted(score_map.items(), key=lambda x: x[1], reverse=True)[:top_k]
-    
     out = []
     for pid, sc in merged:
-        meta = point_metadata.get(pid, {})
-        out.append({"point_id": pid, "score": sc, "payload": meta})
-    
+        # payload lookup per project will be done by caller
+        out.append({"point_id": pid, "score": sc})
     return out
 
-def hybrid_search(query: str, top_k: int = Config.TOP_K) -> List[Dict[str, Any]]:
-    """Hybrid search with detailed timing"""
-    print(f"🔍 Searching for: '{query}'")
-    
-    with Timer("Query Embedding"):
+def hybrid_search(project_id: str, query: str, top_k: int = Config.TOP_K) -> List[Dict[str, Any]]:
+    print(f"🔍 Project '{project_id}' searching for: '{query}'")
+    collection = get_collection_name(project_id)
+
+    with Timer("Query Embedding (text)"):
         qvec = embed_text(query)
-    
-    with Timer("Dense Search (Qdrant)"):
-        dense_hits = qdrant_client.query_points(
-            collection_name=Config.COLLECTION_NAME,
-            query=qvec,
-            limit=Config.DENSE_LIMIT,
-            with_payload=True
-        ).points
-        print(f"    Found {len(dense_hits)} dense results")
-    
-    with Timer("Sparse Search (BM25)"):
-        sparse_ids = []
-        if bm25_index is not None and bm25_texts:
-            tokenized_query = query.split()
-            top_docs = bm25_index.get_top_n(tokenized_query, bm25_texts, n=Config.SPARSE_LIMIT)
-            for doc in top_docs:
-                try:
-                    idx = bm25_texts.index(doc)
-                    sparse_ids.append(bm25_point_ids[idx])
-                except ValueError:
-                    continue
-            print(f"    Found {len(sparse_ids)} sparse results")
-    
+
+    dense_text_hits = []
+    try:
+        with Timer("Dense Search (Qdrant: text)"):
+            dense_text_hits = qdrant_client.query_points(
+                collection_name=collection,
+                query_vector=qvec,
+                limit=Config.DENSE_LIMIT,
+                with_payload=True,
+                vector_name="text" if USE_NAMED_VECTORS else None
+            ).points
+            print(f"    Found {len(dense_text_hits)} text dense results")
+    except Exception as e:
+        print(f"    Text-vector search failed: {e}")
+
+    dense_image_hits = []
+    if USE_NAMED_VECTORS:
+        try:
+            with Timer("Query Embedding (image proxy via CLIP)"):
+                # encode query into CLIP space (text-to-image proxy supported by sentence-transformers)
+                qimg_vec = image_embedder.encode([query], show_progress_bar=False)
+            with Timer("Dense Search (Qdrant: image)"):
+                dense_image_hits = qdrant_client.query_points(
+                    collection_name=collection,
+                    query_vector=qimg_vec[0].tolist(),
+                    limit=Config.DENSE_LIMIT,
+                    with_payload=True,
+                    vector_name="image"
+                ).points
+                print(f"    Found {len(dense_image_hits)} image dense results")
+        except Exception as e:
+            print(f"    Image-vector search skipped/failed: {e}")
+
+    # combine dense hits
+    combined_dense = []
+    id_seen = set()
+    for h in (dense_text_hits + dense_image_hits):
+        if h.id not in id_seen:
+            combined_dense.append(h)
+            id_seen.add(h.id)
+
+    # sparse BM25 search (per-project)
+    sparse_ids = []
+    try:
+        with Timer("Sparse Search (BM25)"):
+            bm25_texts = bm25_texts_by_project.get(project_id, [])
+            bm25_index = bm25_index_by_project.get(project_id)
+            if bm25_index and bm25_texts:
+                tokenized_query = query.split()
+                top_docs = bm25_index.get_top_n(tokenized_query, bm25_texts, n=Config.SPARSE_LIMIT)
+                for doc in top_docs:
+                    try:
+                        idx = bm25_texts.index(doc)
+                        sparse_ids.append(bm25_point_ids_by_project[project_id][idx])
+                    except ValueError:
+                        continue
+                print(f"    Found {len(sparse_ids)} sparse results")
+    except Exception as e:
+        print(f"    BM25 search failed: {e}")
+
     with Timer("RRF Fusion"):
-        merged = rrf_fusion(dense_hits, sparse_ids, top_k)
+        merged = rrf_fusion(combined_dense, sparse_ids, top_k)
         print(f"    Merged to {len(merged)} results")
-    
+
+    # Build context payloads
     context = []
-    for m in merged:
-        p = m["payload"]
+    metadata_map = point_metadata_by_project.get(project_id, {})
+    for item in merged:
+        pid = item["point_id"]
+        meta = metadata_map.get(pid, {})
         context.append({
-            "chunk_id": p.get("chunk_id"),
-            "text": p.get("text"),
-            "tables": json.loads(p.get("tables", "[]")),
-            "images": json.loads(p.get("images", "[]")),
-            "source": p.get("filename"),
-            "page": p.get("page"),
-            "score": m["score"],
-            "searchable_text": p.get("searchable_text", "")
+            "chunk_id": meta.get("chunk_id"),
+            "text": meta.get("text"),
+            "ocr_text": meta.get("ocr_text"),
+            "tables": json.loads(meta.get("tables", "[]")),
+            "images": json.loads(meta.get("images", "[]")),
+            "source": meta.get("filename"),
+            "page": meta.get("page"),
+            "score": float(item["score"]),
+            "searchable_text": meta.get("searchable_text", ""),
+            "chat_id": meta.get("chat_id")
         })
-    
     return context
 
-# -----------------------------------------------------------------------------
-# Answer generation
-# -----------------------------------------------------------------------------
-def generate_cited_answer(query: str, context: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Generate answer with timing"""
-    print(f"🤖 Generating answer with {len(context)} context chunks")
-    
+# ---------------------------------------------------------------------------
+# Answer generation (text-only)
+# ---------------------------------------------------------------------------
+def generate_cited_answer(project_id: str, query: str, context: List[Dict[str, Any]]) -> Dict[str, Any]:
+    print(f"🤖 Generating answer for project={project_id} with {len(context)} context chunks")
     with Timer("Build Context"):
         context_text = ""
         for idx, chunk in enumerate(context):
             context_text += f"\n[{idx+1}] Source: {chunk.get('source')} (Page {chunk.get('page')})\n"
-            context_text += f"{chunk.get('text')[:500]}\n"  # Limit context size
-    
+            display_text = chunk.get('ocr_text') or chunk.get('text') or ""
+            context_text += f"{display_text[:1000]}\n"
+
     prompt = f"""Answer the question using ONLY the provided sources. Include citations like [1], [2].
 
+PROJECT: {project_id}
 QUESTION: {query}
 
 SOURCES:
 {context_text}
 
 ANSWER (with citations):"""
-    
-    images = []
-    for chunk in context[:2]:  # Max 2 chunks with images
-        for img_b64 in (chunk.get("images") or [])[:1]:  # Max 1 image per chunk
-            images.append(f"data:image/jpeg;base64,{img_b64}")
-    
-    model_to_use = Config.VLM_MODEL if images else Config.LLM_MODEL
-    
-    with Timer(f"LLM Generation ({model_to_use})"):
-        answer_text = call_ollama(model_to_use, prompt, images=images, max_tokens=512, temperature=0.7)
-    
+
+    with Timer("LLM Generation (text-only)"):
+        answer_text = call_ollama(Config.LLM_MODEL, prompt, max_tokens=512, temperature=0.7)
+
     with Timer("Extract Citations"):
         citations = []
         for idx, chunk in enumerate(context):
             tag = f"[{idx+1}]"
             if tag in answer_text:
                 citations.append(Citation(
-                    text=(chunk.get("text") or "")[:200] + "...",
+                    text=(chunk.get("ocr_text") or chunk.get("text") or "")[:200] + "...",
                     source=chunk.get("source"),
                     page=int(chunk.get("page") or 0),
                     chunk_id=chunk.get("chunk_id"),
                     confidence=float(chunk.get("score") or 0.0)
                 ))
         print(f"    Extracted {len(citations)} citations")
-    
+
     return {"answer": answer_text, "citations": citations}
 
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Workflow nodes
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 def retrieval_node(state: RAGState) -> RAGState:
-    state["context"] = hybrid_search(state["query"], top_k=Config.TOP_K)
+    state["context"] = hybrid_search(state["project_id"], state["query"], top_k=state.get("top_k", Config.TOP_K))
     return state
 
 def generation_node(state: RAGState) -> RAGState:
-    res = generate_cited_answer(state["query"], state["context"])
+    res = generate_cited_answer(state["project_id"], state["query"], state["context"])
     state["answer"] = res["answer"]
     state["citations"] = res["citations"]
     return state
 
-# -----------------------------------------------------------------------------
-# Image processing (SIMPLIFIED - no VLM, just Tesseract OCR)
-# -----------------------------------------------------------------------------
-def process_image(file_path: str, filename: str) -> List[Dict[str, Any]]:
-    """Process image file with OCR only (no vision model)"""
-    print(f"🖼️  Processing Image: {file_path}")
-    
-    import base64
-    from PIL import Image as PILImage
-    
-    with Timer("Load and Encode Image"):
-        # Read and encode image
-        with open(file_path, "rb") as f:
-            img_data = f.read()
-        img_b64 = base64.b64encode(img_data).decode('utf-8')
-        
-        # Get image dimensions
-        try:
-            img = PILImage.open(file_path)
-            width, height = img.size
-            print(f"    Image size: {width}x{height}")
-        except Exception as e:
-            print(f"    Could not read image dimensions: {e}")
-            width, height = 0, 0
-    
-    # Create a single chunk for the image
-    chunk_data = {
-        "chunk_id": str(uuid.uuid4()),
-        "text": "",  # Will be filled by OCR or description
-        "tables": [],
-        "images": [img_b64],
-        "metadata": {
-            "page": 1,
-            "type": "image",
-            "width": width,
-            "height": height
-        }
-    }
-    
-    # Try Tesseract OCR first (fast)
-    with Timer("Tesseract OCR"):
-        try:
-            import pytesseract
-            img_pil = PILImage.open(file_path)
-            ocr_text = pytesseract.image_to_string(img_pil)
-            if ocr_text.strip():
-                chunk_data["text"] = f"Image OCR text:\n{ocr_text.strip()}"
-                print(f"    Extracted {len(ocr_text.split())} words via OCR")
-            else:
-                print(f"    No text found via OCR")
-        except Exception as e:
-            print(f"    ⚠️  OCR failed: {e}")
-    
-    # If no OCR text, add basic description
-    if not chunk_data["text"]:
-        chunk_data["text"] = f"Image file: {filename} ({width}x{height})"
-        print(f"    Using filename as description")
-    
-    print(f"✅ Created 1 chunk for image")
-    return [chunk_data]
-
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # API endpoints
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 @app.post("/upload", response_model=UploadResponse)
-async def upload_document(file: UploadFile = File(...)):
-    """Upload and process document (PDF or Image)"""
-    
+async def upload_document(
+    project_id: str = Form(...),
+    chat_id: Optional[str] = Form(None),
+    file: UploadFile = File(...)
+):
     print("\n" + "="*80)
-    print(f"📤 NEW UPLOAD: {file.filename}")
+    print(f"📤 NEW UPLOAD: {file.filename}  (project={project_id}, chat={chat_id})")
     print("="*80)
-    
-    # Check file type
     file_ext = file.filename.lower().split('.')[-1]
     supported_images = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp']
-    
+
     if file_ext not in ['pdf'] + supported_images:
         raise HTTPException(400, f"Unsupported file type. Supported: PDF, {', '.join(supported_images)}")
-    
+
     document_id = str(uuid.uuid4())
     file_path = Config.UPLOAD_DIR / f"{document_id}_{file.filename}"
-    
+
     with Timer(f"Save Upload ({file.filename})"):
         with open(file_path, "wb") as f:
             f.write(await file.read())
-    
+
     try:
         with Timer(f"Process Document ({file.filename})"):
-            # Process based on file type
             if file_ext == 'pdf':
                 chunks = process_pdf(str(file_path))
             else:
                 chunks = process_image(str(file_path), file.filename)
-            
-            store_in_vectordb(chunks, document_id, file.filename)
-        
+            store_in_vectordb(chunks, document_id, file.filename, project_id, chat_id)
+
         print(f"\n✅ Upload completed")
         print("="*80 + "\n")
-        
         return UploadResponse(
             message=f"{'PDF' if file_ext == 'pdf' else 'Image'} processed successfully",
             document_id=document_id,
@@ -656,39 +669,24 @@ async def upload_document(file: UploadFile = File(...)):
 
 @app.post("/query", response_model=QueryResponse)
 async def query_documents(req: QueryRequest):
-    """Query documents"""
     print("\n" + "="*80)
-    print(f"📥 NEW QUERY: {req.query}")
+    print(f"📥 NEW QUERY: project={req.project_id} query='{req.query}' chat={req.chat_id}")
     print("="*80)
-    
     start = datetime.now()
-    
+
     try:
         with Timer("TOTAL QUERY TIME"):
-            state: RAGState = {
-                "query": req.query,
-                "context": [],
-                "answer": "",
-                "citations": []
-            }
-            
+            state: RAGState = {"project_id": req.project_id, "query": req.query, "context": [], "answer": "", "citations": [], "top_k": req.top_k}
             with Timer("Retrieval Phase"):
                 state = retrieval_node(state)
-            
             with Timer("Generation Phase"):
                 state = generation_node(state)
-        
+
         elapsed = (datetime.now() - start).total_seconds()
-        
         print(f"\n✅ Query completed in {elapsed:.3f}s")
         print("="*80 + "\n")
-        
-        return QueryResponse(
-            query=req.query,
-            answer=state["answer"],
-            citations=state["citations"],
-            processing_time=elapsed
-        )
+
+        return QueryResponse(query=req.query, answer=state["answer"], citations=state["citations"], processing_time=elapsed)
     except Exception as e:
         print(f"❌ Query error: {e}")
         import traceback
@@ -699,65 +697,48 @@ async def query_documents(req: QueryRequest):
 async def health_check():
     return {
         "status": "healthy",
-        "version": "1.0.0-profiled",
-        "models": {
-            "slm": Config.SLM_MODEL,
-            "llm": Config.LLM_MODEL,
-            "vlm": Config.VLM_MODEL,
-            "embedder": Config.EMBED_MODEL
-        }
+        "version": "1.0.0-projects",
+        "models": {"slm": Config.SLM_MODEL, "llm": Config.LLM_MODEL, "embedder": Config.EMBED_MODEL, "clip": Config.CLIP_MODEL},
+        "named_vector_mode": USE_NAMED_VECTORS
     }
 
 @app.get("/debug/ollama")
 async def debug_ollama():
-    """Debug Ollama"""
     try:
         with Timer("Ollama Debug Check"):
             models = get_available_models()
             test = call_ollama(Config.SLM_MODEL, "Say hello", max_tokens=10)
-        
-        return {
-            "status": "healthy",
-            "ollama_url": Config.OLLAMA_URL,
-            "available_models": models,
-            "test_generation": test[:100]
-        }
+        return {"status": "healthy", "ollama_url": Config.OLLAMA_URL, "available_models": models, "test_generation": test[:100]}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
 @app.get("/debug/qdrant")
 async def debug_qdrant():
-    """Debug Qdrant"""
     try:
-        collection_info = qdrant_client.get_collection(collection_name=Config.COLLECTION_NAME)
-        return {
-            "status": "healthy",
-            "points_count": collection_info.points_count,
-            "bm25_docs": len(bm25_texts)
-        }
+        # list collections
+        collections = qdrant_client.get_collections().collections
+        return {"status": "healthy", "collections": [c.name for c in collections], "bm25_projects": list(bm25_texts_by_project.keys())}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
-# -----------------------------------------------------------------------------
-# Startup
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Startup banner
+# ---------------------------------------------------------------------------
 @app.on_event("startup")
 async def startup_event():
     print("\n" + "="*80)
-    print("🚀 Offline Multimodal RAG System (PROFILED VERSION)")
+    print("🚀 AI Service (project-scoped Qdrant + BM25)")
     print("="*80)
     print(f"📍 Qdrant: {Config.QDRANT_URL}")
     print(f"🤖 Ollama: {Config.OLLAMA_URL}")
-    print(f"📦 Collection: {Config.COLLECTION_NAME}")
-    print(f"🧠 SLM: {Config.SLM_MODEL}")
-    print(f"🧠 LLM: {Config.LLM_MODEL}")
-    print(f"🧠 VLM: {Config.VLM_MODEL}")
     print(f"🔢 Embedder: {Config.EMBED_MODEL}")
+    print(f"🎯 CLIP: {Config.CLIP_MODEL}")
+    print(f"✅ Named-vector mode: {USE_NAMED_VECTORS}")
     print("="*80 + "\n")
 
-# -----------------------------------------------------------------------------
-# Run
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)
