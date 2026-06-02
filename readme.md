@@ -275,6 +275,13 @@ Speak:
 ✔ Electron UI – Frontend
 
 ---
+## Future Enhancements
+
+- Multi-language document support
+- Improved OCR accuracy
+- Video file ingestion support
+
+---
 
 # 📜 **License**
 
